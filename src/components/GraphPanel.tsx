@@ -1,5 +1,4 @@
-// components/GraphPanel.tsx
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -9,68 +8,101 @@ import {
   SheetDescription,
   SheetFooter,
 } from "@/components/ui/sheet";
-import { X, LineChart } from "lucide-react"; // Use your icons
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  ChartData,
-} from "chart.js";
-import { Line } from "react-chartjs-2";
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-);
+import { Loader2 } from "lucide-react";
 
 interface GraphPanelProps {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
-  graphData: any | null; // Expects data structure from AI: { type: 'line', data: { labels: [], datasets: [{ label: '', data: [] }] } }
+  desmosExpressions: string[] | null; // Expects an array of Desmos expression strings
 }
 
 export function GraphPanel({
   isOpen,
   onOpenChange,
-  graphData,
+  desmosExpressions,
 }: GraphPanelProps) {
-  const chartRef = useRef<ChartJS<"line", number[], string>>(null);
+  const desmosContainerRef = useRef<HTMLDivElement>(null);
+  const calculatorRef = useRef<any>(null); // Holds the Desmos calculator instance
+  const [isDesmosLoading, setIsDesmosLoading] = useState(true);
 
-  // Default options or customize as needed
-  const options = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: "top" as const,
-      },
-      title: {
-        display: true,
-        text: "Graph Visualization",
-      },
-    },
-  };
-
-  // Prepare data in Chart.js format, handle null/empty cases
-  const chartJsData: ChartData<"line", number[], string> = graphData?.data ?? {
-    labels: [],
-    datasets: [],
-  };
-
-  // Optional: Force chart update when data changes significantly
+  // Effect: Initialize Desmos when the panel opens or expressions change
   useEffect(() => {
-    chartRef.current?.update();
-  }, [graphData]);
+    let checkInterval: NodeJS.Timeout;
+
+    if (isOpen) {
+      // Poll until the Desmos API is available
+      checkInterval = setInterval(() => {
+        if (window.Desmos && window.Desmos.GraphingCalculator) {
+          clearInterval(checkInterval);
+          setIsDesmosLoading(false);
+          if (desmosContainerRef.current && !calculatorRef.current) {
+            try {
+              const elt = desmosContainerRef.current;
+              elt.innerHTML = ""; // Clear any previous content
+              const options = {
+                keypad: true,
+                expressions: false, // We'll manage expressions manually
+                settingsMenu: true,
+              };
+              console.log("Initializing Desmos Calculator...");
+              calculatorRef.current = window.Desmos.GraphingCalculator(
+                elt,
+                options,
+              );
+
+              // Apply initial expressions if provided
+              if (desmosExpressions && desmosExpressions.length > 0) {
+                setDesmosExpressions(desmosExpressions);
+              }
+            } catch (error) {
+              console.error("Error initializing Desmos Calculator:", error);
+            }
+          }
+        }
+      }, 100);
+    }
+
+    return () => {
+      clearInterval(checkInterval);
+    };
+  }, [isOpen, desmosExpressions]);
+
+  // Effect: Update expressions if they change while the panel is open
+  useEffect(() => {
+    if (calculatorRef.current && isOpen && desmosExpressions) {
+      console.log("Updating Desmos expressions:", desmosExpressions);
+      setDesmosExpressions(desmosExpressions);
+    }
+  }, [desmosExpressions, isOpen]);
+
+  // Set Desmos expressions
+  const setDesmosExpressions = (expressions: string[]) => {
+    if (calculatorRef.current) {
+      calculatorRef.current.setBlank(); // Clear any previous expressions
+      const expressionsArray = expressions.map((expr, index) => ({
+        id: `expr-${index}`,
+        latex: expr,
+      }));
+      console.log("Setting Desmos expressions:", expressionsArray);
+      calculatorRef.current.setExpressions(expressionsArray);
+    }
+  };
+
+  // Effect: Cleanup and destroy the calculator when the panel closes
+  useEffect(() => {
+    if (!isOpen && calculatorRef.current) {
+      console.log("Destroying Desmos Calculator instance...");
+      try {
+        calculatorRef.current.destroy();
+      } catch (error) {
+        console.error("Error destroying Desmos instance:", error);
+      }
+      calculatorRef.current = null;
+      if (desmosContainerRef.current) {
+        desmosContainerRef.current.innerHTML = "";
+      }
+    }
+  }, [isOpen]);
 
   return (
     <Sheet open={isOpen} onOpenChange={onOpenChange}>
@@ -79,24 +111,32 @@ export function GraphPanel({
         className="w-[400px] sm:w-[540px] md:w-[700px] flex flex-col"
       >
         <SheetHeader>
-          <SheetTitle>Graph Visualization</SheetTitle>
+          <SheetTitle>Desmos Graph</SheetTitle>
           <SheetDescription>
-            Visual representation based on chat. Tag @graph to generate or
-            discuss.
+            Interactive graph based on chat. Tag @graph to generate or discuss.
           </SheetDescription>
         </SheetHeader>
-        <div className="flex-grow border rounded-md overflow-hidden mt-4 p-4 relative h-[400px]">
-          {" "}
-          {/* Added relative + height */}
-          {graphData ? (
-            <Line ref={chartRef} options={options} data={chartJsData} />
-          ) : (
+        {/* Container for Desmos */}
+        <div className="flex-grow border rounded-md overflow-hidden mt-4 relative min-h-[400px]">
+          {isDesmosLoading ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
-              No graph data available. Use @graph in chat.
+              <Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading
+              Desmos...
+            </div>
+          ) : (
+            <div
+              ref={desmosContainerRef}
+              className="absolute inset-0 w-full h-full"
+            >
+              {!desmosExpressions && (
+                <div className="flex items-center justify-center h-full text-muted-foreground p-4 text-center">
+                  Desmos loaded. Use @graph in chat to plot expressions.
+                </div>
+              )}
             </div>
           )}
         </div>
-        <SheetFooter className="mt-4">
+        <SheetFooter className="mt-4 flex-shrink-0">
           <Button onClick={() => onOpenChange(false)}>Close</Button>
         </SheetFooter>
       </SheetContent>

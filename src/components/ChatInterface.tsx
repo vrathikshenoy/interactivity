@@ -1,8 +1,8 @@
-// components/ChatInterface.tsx
-"use client"; // This component uses hooks
-import { toast } from "sonner"; // Import your toast library
+//ChatInterface.tsx
+"use client";
+import { toast } from "sonner";
 import React, { useState, useRef, useEffect } from "react";
-import { v4 as uuidv4 } from "uuid"; // For unique keys
+import { v4 as uuidv4 } from "uuid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -16,7 +16,7 @@ interface Message {
   role: "user" | "model";
   content: string;
   mcqs?: McqData[];
-  graphData?: any;
+  desmosExpressions?: string[]; // *** CHANGED ***
 }
 
 interface McqData {
@@ -28,32 +28,32 @@ interface McqData {
 interface ChatInterfaceProps {
   onToggleCanvas: () => void;
   onToggleGraph: () => void;
-  // This prop now holds the ref object from the parent (page.tsx)
-  // which contains the function to get canvas data (or null)
   getCanvasDataUrlFuncRef: React.MutableRefObject<(() => string | null) | null>;
-  updateGraphData: (data: any | null) => void; // Function to update graph panel
+  updateDesmosExpressions: (expressions: string[] | null) => void; // *** RENAMED prop ***
 }
 
 export function ChatInterface({
   onToggleCanvas,
   onToggleGraph,
   getCanvasDataUrlFuncRef,
-  updateGraphData,
+  updateDesmosExpressions, // *** Use RENAMED prop ***
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  // Ref for the viewport element *within* ScrollArea for scrolling control
+  const viewportRef = useRef<HTMLDivElement>(null);
 
   // Scroll to bottom when messages change
   useEffect(() => {
-    if (scrollAreaRef.current) {
-      scrollAreaRef.current.scrollTo({
-        top: scrollAreaRef.current.scrollHeight,
-        behavior: "smooth",
+    const viewport = viewportRef.current;
+    if (viewport) {
+      // Use requestAnimationFrame for smoother scrolling after render
+      requestAnimationFrame(() => {
+        viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
       });
     }
-  }, [messages]);
+  }, [messages]); // Trigger only when messages array changes
 
   const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setInput(event.target.value);
@@ -69,61 +69,37 @@ export function ChatInterface({
     // --- Canvas Tag Handling ---
     let canvasDataUrl: string | null = null;
     const requiresCanvas = userMessageContent.toLowerCase().includes("@canvas");
-
     if (requiresCanvas) {
       console.log("ChatInterface: Detected @canvas tag.");
-      onToggleCanvas(); // Ensure canvas is open or opening
+      onToggleCanvas();
+      await new Promise((resolve) => setTimeout(resolve, 150)); // Slightly increased delay
 
-      // Give React a moment to potentially update state and refs if panel was just opened
-      // Adjust delay if needed, or explore more robust state synchronization
-      await new Promise((resolve) => setTimeout(resolve, 100)); // 100ms delay
-
-      // Now try to get canvas data using the function stored in the ref
       if (getCanvasDataUrlFuncRef.current) {
-        console.log(
-          "ChatInterface: Calling function from getCanvasDataUrlFuncRef.current()",
-        );
         try {
-          canvasDataUrl = getCanvasDataUrlFuncRef.current(); // Call the function VIA the ref
+          canvasDataUrl = getCanvasDataUrlFuncRef.current();
           if (canvasDataUrl) {
-            console.log(
-              "ChatInterface: Successfully got canvas data URL (length:",
-              canvasDataUrl.length,
-              ")",
-            );
-            // Optional: Check if it's just a blank canvas placeholder?
+            console.log("ChatInterface: Got canvas data URL.");
           } else {
-            console.warn(
-              "ChatInterface: Got null/empty data URL from canvas getter.",
-            );
-            // Don't show error toast here, maybe the canvas *is* blank intentionally.
-            // The AI will just not receive image data.
-            // Optionally inform user: toast({ title: "Canvas Empty?", description: "Sending message without canvas image." });
+            console.warn("ChatInterface: Got null/empty data URL from canvas.");
           }
         } catch (error) {
-          console.error(
-            "ChatInterface: Error calling getCanvasDataUrl function:",
-            error,
-          );
+          console.error("ChatInterface: Error getting canvas data:", error);
           toast({
             variant: "destructive",
             title: "Canvas Error",
-            description: "Failed to capture canvas image data.",
+            description: "Failed to get canvas data.",
           });
-          // Decide if you want to proceed without canvas data or stop submission
-          // For now, we'll proceed without it
+          // Proceed without canvas data
           canvasDataUrl = null;
         }
       } else {
-        console.warn(
-          "ChatInterface: getCanvasDataUrlFuncRef.current is null. Canvas component might still be loading or getter wasn't set.",
-        );
+        console.warn("ChatInterface: Canvas getter function not available.");
         toast({
           variant: "destructive",
           title: "Canvas Not Ready",
-          description: "Try sending the message again in a moment.",
+          description: "Please wait a moment and try again.",
         });
-        // Stop submission if canvas was required but not ready
+        // Don't submit if canvas required but not ready
         return;
       }
     }
@@ -132,7 +108,7 @@ export function ChatInterface({
     // --- Graph Tag Handling ---
     if (userMessageContent.toLowerCase().includes("@graph")) {
       console.log("ChatInterface: Detected @graph tag.");
-      onToggleGraph(); // Open the graph panel
+      onToggleGraph(); // Open graph panel speculatively
     }
     // --- End Graph Tag Handling ---
 
@@ -145,7 +121,8 @@ export function ChatInterface({
     setMessages((prevMessages) => [...prevMessages, newUserMessage]);
     setInput("");
     setIsLoading(true);
-    updateGraphData(null); // Clear previous graph data
+    // *** Clear previous Desmos expressions ***
+    updateDesmosExpressions(null);
 
     const historyForAPI = messages.map(({ role, content }) => ({
       role,
@@ -153,17 +130,14 @@ export function ChatInterface({
     }));
 
     try {
-      console.log(
-        "ChatInterface: Sending to /api/chat with canvasDataUrl:",
-        canvasDataUrl ? `Present (length: ${canvasDataUrl.length})` : "null",
-      );
+      console.log("ChatInterface: Sending to /api/chat...");
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           history: historyForAPI,
           message: userMessageContent,
-          canvasDataUrl: canvasDataUrl, // Send data URL (or null)
+          canvasDataUrl: canvasDataUrl,
         }),
       });
 
@@ -175,31 +149,29 @@ export function ChatInterface({
       }
 
       const data = await response.json();
-      console.log("ChatInterface: Received response from /api/chat:", data);
+      console.log("ChatInterface: Received response:", data);
 
       const aiResponseMessage: Message = {
         id: uuidv4(),
         role: "model",
         content: data.reply || "Sorry, I couldn't generate a response.",
         mcqs: data.mcqData,
-        graphData: data.graphData,
+        desmosExpressions: data.desmosExpressions, // *** Store Desmos expressions ***
       };
 
       setMessages((prevMessages) => [...prevMessages, aiResponseMessage]);
 
-      if (data.graphData) {
+      // *** Update Desmos panel if expressions received ***
+      if (data.desmosExpressions) {
         console.log(
-          "ChatInterface: Received graph data, updating panel:",
-          data.graphData,
+          "ChatInterface: Received Desmos expressions, updating panel:",
+          data.desmosExpressions,
         );
-        updateGraphData(data.graphData);
-        onToggleGraph(); // Ensure graph panel is open if data arrives
+        updateDesmosExpressions(data.desmosExpressions);
+        onToggleGraph(); // Ensure graph panel is open
       }
     } catch (error: any) {
-      console.error(
-        "ChatInterface: Failed to send message or process response:",
-        error,
-      );
+      console.error("ChatInterface: API call failed:", error);
       toast({
         variant: "destructive",
         title: "Error",
@@ -224,9 +196,9 @@ export function ChatInterface({
     messageId: string,
     selectedOption: string,
   ) => {
-    // ... (MCQ handling logic - no changes needed from previous version) ...
+    // (MCQ logic remains the same)
     console.log(
-      `MCQ Selection on message ${messageId}, MCQ ${mcqIndex}: ${selectedOption}`,
+      `MCQ Selection: msg ${messageId}, mcq ${mcqIndex}, opt ${selectedOption}`,
     );
     const message = messages.find((m) => m.id === messageId);
     const mcq = message?.mcqs?.[mcqIndex];
@@ -234,51 +206,56 @@ export function ChatInterface({
       if (selectedOption === mcq.correctAnswer) {
         toast({
           title: "Correct!",
-          description: `Your answer "${selectedOption}" is right.`,
+          description: `Answer "${selectedOption}" is right.`,
         });
       } else {
         toast({
           variant: "destructive",
           title: "Incorrect",
-          description: `The correct answer was "${mcq.correctAnswer}".`,
+          description: `Correct answer: "${mcq.correctAnswer}".`,
         });
       }
     }
   };
 
   return (
+    // Ensure this component fills height and allows ScrollArea to grow
     <div className="flex flex-col h-full bg-muted/50">
-      {/* Chat Messages Area */}
-      <ScrollArea className="flex-grow p-4" ref={scrollAreaRef}>
-        <div className="space-y-4">
+      {/* Chat Messages Area - Make ScrollArea grow */}
+      {/* Pass viewportRef to ScrollArea */}
+      <ScrollArea className="flex-grow p-4" viewportRef={viewportRef}>
+        <div className="space-y-4 pr-4">
+          {" "}
+          {/* Added padding-right to prevent scrollbar overlap */}
           {messages.map((message) => (
             <div
               key={message.id}
               className={`flex items-start gap-3 ${message.role === "user" ? "justify-end" : ""}`}
             >
               {message.role === "model" && (
-                <Bot className="w-6 h-6 text-primary flex-shrink-0" />
+                <Bot className="w-6 h-6 text-primary flex-shrink-0 mt-1" /> // Added mt-1 for alignment
               )}
               <div
-                className={`rounded-lg p-3 max-w-[75%] break-words ${message.role === "user" ? "bg-primary text-primary-foreground" : "bg-background border"}`}
+                className={`rounded-lg p-3 max-w-[85%] sm:max-w-[75%] break-words shadow-sm ${message.role === "user" ? "bg-primary text-primary-foreground" : "bg-background border"}`}
               >
-                {/* Basic rendering - consider react-markdown for full support */}
-                <p className="whitespace-pre-wrap">{message.content}</p>
+                <p className="whitespace-pre-wrap text-sm">{message.content}</p>
 
                 {/* Render MCQs */}
                 {message.mcqs && message.mcqs.length > 0 && (
-                  <Card className="mt-4 bg-muted">
-                    {/* ... MCQ Card Content ... */}
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-base">Quiz Time!</CardTitle>
+                  <Card className="mt-3 bg-card/50 border shadow-none">
+                    <CardHeader className="pb-2 pt-3">
+                      <CardTitle className="text-sm font-medium">
+                        Quiz Time!
+                      </CardTitle>
                     </CardHeader>
-                    <CardContent className="space-y-4">
+                    <CardContent className="space-y-3 pb-3 text-sm">
                       {message.mcqs.map((mcq, mcqIndex) => (
                         <div key={mcqIndex}>
                           <p className="font-medium mb-2">
                             {mcqIndex + 1}. {mcq.question}
                           </p>
                           <RadioGroup
+                            // Disable after selection or add state to track selection? (optional)
                             onValueChange={(value) =>
                               handleMcqSelection(mcqIndex, message.id, value)
                             }
@@ -291,9 +268,11 @@ export function ChatInterface({
                                 <RadioGroupItem
                                   value={option}
                                   id={`${message.id}-mcq${mcqIndex}-opt${optionIndex}`}
+                                  className="h-3.5 w-3.5"
                                 />
                                 <Label
                                   htmlFor={`${message.id}-mcq${mcqIndex}-opt${optionIndex}`}
+                                  className="text-xs font-normal" // Smaller label
                                 >
                                   {option}
                                 </Label>
@@ -306,15 +285,15 @@ export function ChatInterface({
                   </Card>
                 )}
 
-                {/* Indicate graph data */}
-                {message.graphData && (
+                {/* Indicate Desmos graph data */}
+                {message.desmosExpressions && (
                   <div className="mt-2 text-xs text-muted-foreground italic">
-                    (Graph data generated - view in Graph panel)
+                    (Desmos expressions generated - view in Graph panel)
                   </div>
                 )}
               </div>
               {message.role === "user" && (
-                <User className="w-6 h-6 text-primary flex-shrink-0" />
+                <User className="w-6 h-6 text-primary flex-shrink-0 mt-1" /> // Added mt-1 for alignment
               )}
             </div>
           ))}
@@ -322,15 +301,17 @@ export function ChatInterface({
             <div className="flex items-start gap-3">
               <Bot className="w-6 h-6 text-primary flex-shrink-0" />
               <div className="rounded-lg p-3 bg-background border">
-                <Loader2 className="w-5 h-5 animate-spin" />
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
               </div>
             </div>
           )}
         </div>
       </ScrollArea>
 
-      {/* Input Area */}
-      <div className="p-4 border-t bg-background">
+      {/* Input Area - Should not grow */}
+      <div className="p-4 border-t bg-background flex-shrink-0">
+        {" "}
+        {/* Added flex-shrink-0 */}
         <form onSubmit={handleSubmit} className="flex items-center gap-2">
           <Input
             type="text"

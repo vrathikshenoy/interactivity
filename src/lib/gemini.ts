@@ -9,7 +9,7 @@ if (!API_KEY) {
 const genAI = new GoogleGenerativeAI(API_KEY);
 
 export const generativeModel = genAI.getGenerativeModel({
-  model: "gemini-1.5-flash", // Or "gemini-1.5-pro" - flash is faster/cheaper
+  model: "gemini-2.5-pro-exp-03-25", // Or "gemini-1.5-pro" - flash is faster/cheaper
   // Optional: Configure safety settings if needed
   // safetySettings: [
   //   { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
