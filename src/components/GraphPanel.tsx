@@ -108,7 +108,7 @@ export function GraphPanel({
     <Sheet open={isOpen} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-[400px] sm:w-[540px] md:w-[700px] flex flex-col"
+        className="w-[95vw] max-w-[1200px] sm:w-[90vw] md:w-[85vw] lg:w-[80vw] xl:w-[75vw]"
       >
         <SheetHeader>
           <SheetTitle>Desmos Graph</SheetTitle>

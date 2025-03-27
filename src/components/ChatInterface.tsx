@@ -220,7 +220,7 @@ export function ChatInterface({
 
   return (
     // Ensure this component fills height and allows ScrollArea to grow
-    <div className="flex flex-col h-full bg-muted/50">
+    <div className="flex flex-col h-full bg-muted/50 w-full">
       {/* Chat Messages Area - Make ScrollArea grow */}
       {/* Pass viewportRef to ScrollArea */}
       <ScrollArea className="flex-grow p-4" viewportRef={viewportRef}>
@@ -230,7 +230,7 @@ export function ChatInterface({
           {messages.map((message) => (
             <div
               key={message.id}
-              className={`flex items-start gap-3 ${message.role === "user" ? "justify-end" : ""}`}
+              className={`flex items-start gap-3 text-5xl ${message.role === "user" ? "justify-end" : ""}`}
             >
               {message.role === "model" && (
                 <Bot className="w-6 h-6 text-primary flex-shrink-0 mt-1" /> // Added mt-1 for alignment
@@ -309,29 +309,33 @@ export function ChatInterface({
       </ScrollArea>
 
       {/* Input Area - Should not grow */}
-      <div className="p-4 border-t bg-background flex-shrink-0">
-        {" "}
-        {/* Added flex-shrink-0 */}
-        <form onSubmit={handleSubmit} className="flex items-center gap-2">
-          <Input
-            type="text"
-            placeholder="Ask anything... Use @canvas or @graph..."
-            value={input}
-            onChange={handleInputChange}
-            className="flex-grow"
-            disabled={isLoading}
-            aria-label="Chat input"
-          />
-          <Button
-            type="submit"
-            disabled={isLoading || !input.trim()}
-            size="icon"
-            aria-label="Send message"
-          >
-            <CornerDownLeft className="w-4 h-4" />
-          </Button>
-        </form>
-      </div>
+      <div className="absolute bottom-10 left-0 right-0 flex justify-center">
+  <form
+    onSubmit={handleSubmit}
+    className="flex items-center gap-4 w-full max-w-2xl bg-gray-900 p-4 rounded-xl shadow-lg border border-gray-700"
+  >
+    <Input
+      type="text"
+      placeholder="Ask anything... Use @canvas or @graph..."
+      value={input}
+      onChange={handleInputChange}
+      className="flex-grow p-4 text-lg bg-gray-800 text-white rounded-lg border border-gray-700 focus:ring-2 focus:ring-blue-500"
+      disabled={isLoading}
+      aria-label="Chat input"
+    />
+    <Button
+      type="submit"
+      disabled={isLoading || !input.trim()}
+      size="lg"
+      className="p-4 bg-blue-600 hover:bg-blue-500 text-white rounded-lg"
+      aria-label="Send message"
+    >
+      <CornerDownLeft className="w-6 h-6" />
+    </Button>
+  </form>
+</div>
+
+
     </div>
   );
 }
