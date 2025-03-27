@@ -1,5 +1,4 @@
-// components/CanvasPanel.tsx
-import React, { useRef, useState, useEffect, forwardRef } from "react"; // Added forwardRef, useEffect
+import React, { useRef, useState, useEffect, forwardRef } from "react";
 import { Stage, Layer, Line } from "react-konva";
 import {
   Sheet,
@@ -10,41 +9,58 @@ import {
   SheetFooter,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-interface CanvasPanelProps {
-  isOpen: boolean;
-  onOpenChange: (isOpen: boolean) => void;
-  // Function provided by parent to receive the internal getter function
-  setCanvasGetter: (getter: (() => string | null) | null) => void;
-}
+import { Pencil, Eraser, Palette, Download, Undo, Trash2 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
+type Tool = "pen" | "eraser";
 type LineData = {
   points: number[];
-  tool: "pen" | "eraser";
+  tool: Tool;
   strokeWidth: number;
   color: string;
 };
 
-// Use forwardRef for good practice, although not strictly needed for this prop-based approach
 export const CanvasPanel = forwardRef<any, CanvasPanelProps>(
   ({ isOpen, onOpenChange, setCanvasGetter }, ref) => {
-    // Added ref param
     const [lines, setLines] = useState<LineData[]>([]);
-    const [tool] = useState<"pen" | "eraser">("pen");
+    const [history, setHistory] = useState<LineData[][]>([]);
+    const [currentTool, setCurrentTool] = useState<Tool>("pen");
+    const [currentColor, setCurrentColor] = useState("#df4b26");
+    const [strokeWidth, setStrokeWidth] = useState(3);
     const isDrawing = useRef(false);
-    const stageRef = useRef<any>(null); // Konva Stage ref
+    const stageRef = useRef<any>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // Increased canvas size
+    const CANVAS_WIDTH = 2000;
+    const CANVAS_HEIGHT = 2000;
+
+    // Color palette
+    const colorPalette = [
+      "#df4b26", // Red
+      "#000000", // Black
+      "#0000FF", // Blue
+      "#008000", // Green
+      "#FFA500", // Orange
+      "#800080", // Purple
+    ];
 
     const handleMouseDown = (e: any) => {
       isDrawing.current = true;
       const pos = e.target.getStage().getPointerPosition();
-      setLines([
-        ...lines,
-        {
-          tool,
-          points: [pos.x, pos.y],
-          strokeWidth: tool === "pen" ? 3 : 10,
-          color: tool === "pen" ? "#df4b26" : "#ffffff",
-        },
-      ]);
+      const newLine: LineData = {
+        tool: currentTool,
+        points: [pos.x, pos.y],
+        strokeWidth: currentTool === "pen" ? strokeWidth : 10,
+        color: currentTool === "pen" ? currentColor : "#ffffff",
+      };
+
+      setLines((prevLines) => [...prevLines, newLine]);
+      setHistory((prevHistory) => [...prevHistory, lines]);
     };
 
     const handleMouseMove = (e: any) => {
@@ -53,8 +69,12 @@ export const CanvasPanel = forwardRef<any, CanvasPanelProps>(
       const point = stage.getPointerPosition();
       const lastLine = lines[lines.length - 1];
       lastLine.points = lastLine.points.concat([point.x, point.y]);
-      lines.splice(lines.length - 1, 1, lastLine);
-      setLines(lines.concat());
+
+      setLines((prevLines) => {
+        const updatedLines = [...prevLines];
+        updatedLines[updatedLines.length - 1] = lastLine;
+        return updatedLines;
+      });
     };
 
     const handleMouseUp = () => {
@@ -63,58 +83,51 @@ export const CanvasPanel = forwardRef<any, CanvasPanelProps>(
 
     const clearCanvas = () => {
       setLines([]);
+      setHistory([]);
     };
 
-    // Use useEffect to pass the internal getter function UP to the parent
-    // via the setCanvasGetter prop.
+    const undo = () => {
+      if (history.length > 0) {
+        const lastState = history[history.length - 1];
+        setLines(lastState);
+        setHistory((prev) => prev.slice(0, -1));
+      }
+    };
+
+    const downloadCanvas = () => {
+      if (stageRef.current) {
+        const dataUrl = stageRef.current.toDataURL({
+          mimeType: "image/png",
+          quality: 1.0,
+        });
+        const link = document.createElement("a");
+        link.download = "canvas_drawing.png";
+        link.href = dataUrl;
+        link.click();
+      }
+    };
+
     useEffect(() => {
-      // Define the function that knows how to get the data URL from the stage ref
       const internalGetDataUrl = (): string | null => {
         if (stageRef.current) {
-          console.log("CanvasPanel: internalGetDataUrl called via parent ref.");
           try {
-            // Ensure stage has dimensions before capturing if necessary
-            if (
-              stageRef.current.width() === 0 ||
-              stageRef.current.height() === 0
-            ) {
-              console.warn(
-                "CanvasPanel: Stage dimensions are zero, data URL might be empty.",
-              );
-            }
-            const dataUrl = stageRef.current.toDataURL({
+            return stageRef.current.toDataURL({
               mimeType: "image/png",
               quality: 0.8,
             });
-            // Optional: Check if data URL is just the blank canvas placeholder
-            // const blankCanvasCheck = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
-            // if (dataUrl === blankCanvasCheck) return null; // Treat blank as null if desired
-            return dataUrl;
           } catch (error) {
             console.error("CanvasPanel: Error getting data URL:", error);
             return null;
           }
         }
-        console.warn(
-          "CanvasPanel: internalGetDataUrl called but stageRef is not ready.",
-        );
         return null;
       };
 
-      // Call the function passed from the parent (exposeCanvasGetter in page.tsx)
-      // to give it access to our internal function.
       setCanvasGetter(internalGetDataUrl);
-      console.log("CanvasPanel: useEffect finished, setCanvasGetter called.");
 
-      // Cleanup: Clear the getter function in the parent when the component unmounts or prop changes
       return () => {
-        console.log(
-          "CanvasPanel: Cleanup effect, calling setCanvasGetter(null).",
-        );
         setCanvasGetter(null);
       };
-      // Dependency array: Re-run if the parent provides a different setter function (shouldn't happen often)
-      // or if the stageRef instance changes (also unlikely).
     }, [setCanvasGetter, stageRef]);
 
     return (
@@ -129,23 +142,90 @@ export const CanvasPanel = forwardRef<any, CanvasPanelProps>(
               Draw diagrams or write notes. Tag @canvas in chat to discuss.
             </SheetDescription>
           </SheetHeader>
-          <div className="flex-grow border rounded-md overflow-hidden mt-4">
-            {/* Set explicit dimensions for the Stage if SheetContent doesn't guarantee them */}
+
+          <div className="flex items-center space-x-2 mb-2">
+            {/* Tool Selection */}
+            <Button
+              variant={currentTool === "pen" ? "default" : "outline"}
+              size="icon"
+              onClick={() => setCurrentTool("pen")}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={currentTool === "eraser" ? "default" : "outline"}
+              size="icon"
+              onClick={() => setCurrentTool("eraser")}
+            >
+              <Eraser className="h-4 w-4" />
+            </Button>
+
+            {/* Color Palette Popover */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <Palette className="h-4 w-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="flex space-x-2 p-2">
+                {colorPalette.map((color) => (
+                  <div
+                    key={color}
+                    className="w-6 h-6 rounded-full cursor-pointer"
+                    style={{
+                      backgroundColor: color,
+                      border:
+                        currentColor === color ? "2px solid black" : "none",
+                    }}
+                    onClick={() => {
+                      setCurrentColor(color);
+                      setCurrentTool("pen");
+                    }}
+                  />
+                ))}
+              </PopoverContent>
+            </Popover>
+
+            {/* Additional Actions */}
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={undo}
+              disabled={history.length === 0}
+            >
+              <Undo className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="icon" onClick={downloadCanvas}>
+              <Download className="h-4 w-4" />
+            </Button>
+          </div>
+
+          <div
+            ref={containerRef}
+            className="flex-grow border rounded-md overflow-auto"
+            style={{
+              maxHeight: "500px",
+              maxWidth: "100%",
+            }}
+          >
             <Stage
-              width={700} // Match expected width or calculate dynamically
-              height={500} // Set appropriate height
+              width={CANVAS_WIDTH}
+              height={CANVAS_HEIGHT}
               onMouseDown={handleMouseDown}
               onMousemove={handleMouseMove}
               onMouseup={handleMouseUp}
-              onTouchStart={handleMouseDown} // Basic touch support
+              onTouchStart={handleMouseDown}
               onTouchMove={handleMouseMove}
               onTouchEnd={handleMouseUp}
               ref={stageRef}
-              style={{ backgroundColor: "white", cursor: "crosshair" }} // Ensure bg for data URL
+              style={{
+                backgroundColor: "white",
+                cursor: "crosshair",
+                margin: 0,
+                padding: 0,
+              }}
             >
               <Layer>
-                {/* Optional: Add a white background rect if needed */}
-                {/* <Rect x={0} y={0} width={700} height={500} fill="white" /> */}
                 {lines.map((line, i) => (
                   <Line
                     key={i}
@@ -163,11 +243,11 @@ export const CanvasPanel = forwardRef<any, CanvasPanelProps>(
               </Layer>
             </Stage>
           </div>
+
           <SheetFooter className="mt-4 flex justify-between items-center">
-            <Button variant="outline" onClick={clearCanvas}>
-              Clear Canvas
+            <Button variant="destructive" onClick={clearCanvas}>
+              <Trash2 className="mr-2 h-4 w-4" /> Clear Canvas
             </Button>
-            {/* Add tool selection here maybe */}
             <Button onClick={() => onOpenChange(false)}>Close</Button>
           </SheetFooter>
         </SheetContent>
@@ -176,4 +256,4 @@ export const CanvasPanel = forwardRef<any, CanvasPanelProps>(
   },
 );
 
-CanvasPanel.displayName = "CanvasPanel"; // Good practice with forwardRef
+CanvasPanel.displayName = "CanvasPanel";

@@ -1,4 +1,3 @@
-//ChatInterface.tsx
 "use client";
 import { toast } from "sonner";
 import React, { useState, useRef, useEffect } from "react";
@@ -36,7 +35,7 @@ export function ChatInterface({
   onToggleCanvas,
   onToggleGraph,
   getCanvasDataUrlFuncRef,
-  updateDesmosExpressions, // *** Use RENAMED prop ***
+  updateDesmosExpressions,
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -156,7 +155,16 @@ export function ChatInterface({
         role: "model",
         content: data.reply || "Sorry, I couldn't generate a response.",
         mcqs: data.mcqData,
-        desmosExpressions: data.desmosExpressions, // *** Store Desmos expressions ***
+        // Ensure desmosExpressions is an array of strings
+        desmosExpressions: Array.isArray(data.desmosExpressions)
+          ? data.desmosExpressions
+              .map((expr) =>
+                typeof expr === "object" && expr !== null && "latex" in expr
+                  ? expr.latex
+                  : expr,
+              )
+              .filter((expr) => typeof expr === "string")
+          : undefined,
       };
 
       setMessages((prevMessages) => [...prevMessages, aiResponseMessage]);
@@ -219,123 +227,121 @@ export function ChatInterface({
   };
 
   return (
-    // Ensure this component fills height and allows ScrollArea to grow
-    <div className="flex flex-col h-full bg-muted/50 w-full">
-      {/* Chat Messages Area - Make ScrollArea grow */}
-      {/* Pass viewportRef to ScrollArea */}
-      <ScrollArea className="flex-grow p-4" viewportRef={viewportRef}>
-        <div className="space-y-4 pr-4">
-          {" "}
-          {/* Added padding-right to prevent scrollbar overlap */}
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex items-start gap-3 text-5xl ${message.role === "user" ? "justify-end" : ""}`}
-            >
-              {message.role === "model" && (
-                <Bot className="w-6 h-6 text-primary flex-shrink-0 mt-1" /> // Added mt-1 for alignment
-              )}
+    <div className="flex flex-col h-full overflow-hidden bg-muted/50 w-full">
+      {/* Scrollable area with relative positioning */}
+      <div className="flex-grow overflow-auto relative pb-24">
+        <ScrollArea className="h-full p-4" viewportRef={viewportRef}>
+          <div className="space-y-4 pr-4">
+            {messages.map((message) => (
               <div
-                className={`rounded-lg p-3 max-w-[85%] sm:max-w-[75%] break-words shadow-sm ${message.role === "user" ? "bg-primary text-primary-foreground" : "bg-background border"}`}
+                key={message.id}
+                className={`flex items-start gap-3 text-5xl ${message.role === "user" ? "justify-end" : ""}`}
               >
-                <p className="whitespace-pre-wrap text-sm">{message.content}</p>
+                {message.role === "model" && (
+                  <Bot className="w-6 h-6 text-primary flex-shrink-0 mt-1" /> // Added mt-1 for alignment
+                )}
+                <div
+                  className={`rounded-lg p-3 max-w-[85%] sm:max-w-[75%] break-words shadow-sm ${message.role === "user" ? "bg-primary text-primary-foreground" : "bg-background border"}`}
+                >
+                  <p className="whitespace-pre-wrap text-sm">
+                    {message.content}
+                  </p>
 
-                {/* Render MCQs */}
-                {message.mcqs && message.mcqs.length > 0 && (
-                  <Card className="mt-3 bg-card/50 border shadow-none">
-                    <CardHeader className="pb-2 pt-3">
-                      <CardTitle className="text-sm font-medium">
-                        Quiz Time!
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3 pb-3 text-sm">
-                      {message.mcqs.map((mcq, mcqIndex) => (
-                        <div key={mcqIndex}>
-                          <p className="font-medium mb-2">
-                            {mcqIndex + 1}. {mcq.question}
-                          </p>
-                          <RadioGroup
-                            // Disable after selection or add state to track selection? (optional)
-                            onValueChange={(value) =>
-                              handleMcqSelection(mcqIndex, message.id, value)
-                            }
-                          >
-                            {mcq.options.map((option, optionIndex) => (
-                              <div
-                                key={optionIndex}
-                                className="flex items-center space-x-2"
-                              >
-                                <RadioGroupItem
-                                  value={option}
-                                  id={`${message.id}-mcq${mcqIndex}-opt${optionIndex}`}
-                                  className="h-3.5 w-3.5"
-                                />
-                                <Label
-                                  htmlFor={`${message.id}-mcq${mcqIndex}-opt${optionIndex}`}
-                                  className="text-xs font-normal" // Smaller label
+                  {/* Render MCQs */}
+                  {message.mcqs && message.mcqs.length > 0 && (
+                    <Card className="mt-3 bg-card/50 border shadow-none">
+                      <CardHeader className="pb-2 pt-3">
+                        <CardTitle className="text-sm font-medium">
+                          Quiz Time!
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3 pb-3 text-sm">
+                        {message.mcqs.map((mcq, mcqIndex) => (
+                          <div key={mcqIndex}>
+                            <p className="font-medium mb-2">
+                              {mcqIndex + 1}. {mcq.question}
+                            </p>
+                            <RadioGroup
+                              // Disable after selection or add state to track selection? (optional)
+                              onValueChange={(value) =>
+                                handleMcqSelection(mcqIndex, message.id, value)
+                              }
+                            >
+                              {mcq.options.map((option, optionIndex) => (
+                                <div
+                                  key={optionIndex}
+                                  className="flex items-center space-x-2"
                                 >
-                                  {option}
-                                </Label>
-                              </div>
-                            ))}
-                          </RadioGroup>
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
-                )}
+                                  <RadioGroupItem
+                                    value={option}
+                                    id={`${message.id}-mcq${mcqIndex}-opt${optionIndex}`}
+                                    className="h-3.5 w-3.5"
+                                  />
+                                  <Label
+                                    htmlFor={`${message.id}-mcq${mcqIndex}-opt${optionIndex}`}
+                                    className="text-xs font-normal" // Smaller label
+                                  >
+                                    {option}
+                                  </Label>
+                                </div>
+                              ))}
+                            </RadioGroup>
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  )}
 
-                {/* Indicate Desmos graph data */}
-                {message.desmosExpressions && (
-                  <div className="mt-2 text-xs text-muted-foreground italic">
-                    (Desmos expressions generated - view in Graph panel)
-                  </div>
+                  {/* Indicate Desmos graph data */}
+                  {message.desmosExpressions && (
+                    <div className="mt-2 text-xs text-muted-foreground italic">
+                      (Desmos expressions generated - view in Graph panel)
+                    </div>
+                  )}
+                </div>
+                {message.role === "user" && (
+                  <User className="w-6 h-6 text-primary flex-shrink-0 mt-1" /> // Added mt-1 for alignment
                 )}
               </div>
-              {message.role === "user" && (
-                <User className="w-6 h-6 text-primary flex-shrink-0 mt-1" /> // Added mt-1 for alignment
-              )}
-            </div>
-          ))}
-          {isLoading && (
-            <div className="flex items-start gap-3">
-              <Bot className="w-6 h-6 text-primary flex-shrink-0" />
-              <div className="rounded-lg p-3 bg-background border">
-                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            ))}
+            {isLoading && (
+              <div className="flex items-start gap-3">
+                <Bot className="w-6 h-6 text-primary flex-shrink-0" />
+                <div className="rounded-lg p-3 bg-background border">
+                  <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                </div>
               </div>
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
 
-      {/* Input Area - Should not grow */}
-      <div className="absolute bottom-10 left-0 right-0 flex justify-center">
-  <form
-    onSubmit={handleSubmit}
-    className="flex items-center gap-4 w-full max-w-2xl bg-gray-900 p-4 rounded-xl shadow-lg border border-gray-700"
-  >
-    <Input
-      type="text"
-      placeholder="Ask anything... Use @canvas or @graph..."
-      value={input}
-      onChange={handleInputChange}
-      className="flex-grow p-4 text-lg bg-gray-800 text-white rounded-lg border border-gray-700 focus:ring-2 focus:ring-blue-500"
-      disabled={isLoading}
-      aria-label="Chat input"
-    />
-    <Button
-      type="submit"
-      disabled={isLoading || !input.trim()}
-      size="lg"
-      className="p-4 bg-blue-600 hover:bg-blue-500 text-white rounded-lg"
-      aria-label="Send message"
-    >
-      <CornerDownLeft className="w-6 h-6" />
-    </Button>
-  </form>
-</div>
-
-
+      {/* Absolutely positioned input at bottom */}
+      <div className="absolute bottom-0 left-0 right-0 z-10 bg-muted/50 p-4">
+        <form
+          onSubmit={handleSubmit}
+          className="flex items-center gap-4 w-full max-w-2xl mx-auto bg-gray-900 p-4 rounded-xl shadow-lg border border-gray-700"
+        >
+          <Input
+            type="text"
+            placeholder="Ask anything... Use @canvas or @graph..."
+            value={input}
+            onChange={handleInputChange}
+            className="flex-grow p-4 text-lg bg-gray-800 text-white rounded-lg border border-gray-700 focus:ring-2 focus:ring-blue-500"
+            disabled={isLoading}
+            aria-label="Chat input"
+          />
+          <Button
+            type="submit"
+            disabled={isLoading || !input.trim()}
+            size="lg"
+            className="p-4 bg-blue-600 hover:bg-blue-500 text-white rounded-lg"
+            aria-label="Send message"
+          >
+            <CornerDownLeft className="w-6 h-6" />
+          </Button>
+        </form>
+      </div>
     </div>
   );
 }
