@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider"; // If you set up themes with shadcn
-import { Toaster as Sonner } from "sonner"; // For displaying toasts
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -20,14 +19,13 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
-        <ThemeProvider // Optional: wrap with ThemeProvider if you configured themes
+        <ThemeProvider
           attribute="class"
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
         >
           {children}
-          <Sonner /> {/* Add toaster here */}
         </ThemeProvider>
       </body>
     </html>
