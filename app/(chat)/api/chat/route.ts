@@ -1,26 +1,16 @@
 import { convertToCoreMessages, Message, streamText } from "ai";
+import { type NextRequest } from "next/server";
 import { z } from "zod";
 
 import { geminiProModel } from "@/ai";
-import {
-  generateReservationPrice,
-  generateSampleFlightSearchResults,
-  generateSampleFlightStatus,
-  generateSampleSeatSelection,
-} from "@/ai/actions";
 import { auth } from "@/app/(auth)/auth";
-import {
-  createReservation,
-  deleteChatById,
-  getChatById,
-  getReservationById,
-  saveChat,
-} from "@/db/queries";
+import { deleteChatById, getChatById, saveChat } from "@/db/queries";
 import { generateUUID } from "@/lib/utils";
 
+import type { Part } from "@google/generative-ai";
+
 export async function POST(request: Request) {
-  const { id, messages }: { id: string; messages: Array<Message> } =
-    await request.json();
+  const { id, messages, canvasDataUrl, attachmentData } = await request.json();
 
   const session = await auth();
 
@@ -28,212 +18,201 @@ export async function POST(request: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
 
+  // Filter out empty messages before converting to core messages
   const coreMessages = convertToCoreMessages(messages).filter(
-    (message) => message.content.length > 0,
+    (message) => message.content && message.content.length > 0,
   );
 
-  const result = await streamText({
-    model: geminiProModel,
-    system: `\n
-        - you help users book flights!
-        - keep your responses limited to a sentence.
-        - DO NOT output lists.
-        - after every tool call, pretend you're showing the result to the user and keep your response limited to a phrase.
-        - today's date is ${new Date().toLocaleDateString()}.
-        - ask follow up questions to nudge user into the optimal flow
-        - ask for any details you don't know, like name of passenger, etc.'
-        - C and D are aisle seats, A and F are window seats, B and E are middle seats
-        - assume the most popular airports for the origin and destination
-        - here's the optimal flow
-          - search for flights
-          - choose flight
-          - select seats
-          - create reservation (ask user whether to proceed with payment or change reservation)
-          - authorize payment (requires user consent, wait for user to finish payment and let you know when done)
-          - display boarding pass (DO NOT display boarding pass without verifying payment)
-        '
-      `,
-    messages: coreMessages,
-    tools: {
-      getWeather: {
-        description: "Get the current weather at a location",
-        parameters: z.object({
-          latitude: z.number().describe("Latitude coordinate"),
-          longitude: z.number().describe("Longitude coordinate"),
-        }),
-        execute: async ({ latitude, longitude }) => {
-          const response = await fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m&hourly=temperature_2m&daily=sunrise,sunset&timezone=auto`,
-          );
+  // Prepare additional parts from canvas or attachments
+  const additionalParts: Part[] = [];
 
-          const weatherData = await response.json();
-          return weatherData;
-        },
-      },
-      displayFlightStatus: {
-        description: "Display the status of a flight",
-        parameters: z.object({
-          flightNumber: z.string().describe("Flight number"),
-          date: z.string().describe("Date of the flight"),
-        }),
-        execute: async ({ flightNumber, date }) => {
-          const flightStatus = await generateSampleFlightStatus({
-            flightNumber,
-            date,
+  // Handle Canvas Data
+  if (canvasDataUrl) {
+    try {
+      const imageRegex = /^data:image\/(png|jpeg|jpg|webp);base64,/;
+      if (imageRegex.test(canvasDataUrl)) {
+        const mimeType = canvasDataUrl
+          .match(imageRegex)?.[0]
+          ?.replace("data:", "")
+          .replace(";base64,", "");
+        const base64Data = canvasDataUrl.split(",")[1];
+        if (mimeType && base64Data) {
+          additionalParts.push({
+            inlineData: {
+              mimeType: mimeType,
+              data: base64Data,
+            },
           });
+        }
+      } else {
+        console.warn("Invalid canvasDataUrl format");
+      }
+    } catch (error) {
+      console.error("Error processing canvas data:", error);
+    }
+  }
 
-          return flightStatus;
-        },
-      },
-      searchFlights: {
-        description: "Search for flights based on the given parameters",
-        parameters: z.object({
-          origin: z.string().describe("Origin airport or city"),
-          destination: z.string().describe("Destination airport or city"),
-        }),
-        execute: async ({ origin, destination }) => {
-          const results = await generateSampleFlightSearchResults({
-            origin,
-            destination,
+  // Handle Attachment Data
+  if (attachmentData) {
+    try {
+      if (attachmentData.mimeType && attachmentData.base64Data) {
+        // For images, we can send them directly
+        if (attachmentData.mimeType.startsWith("image/")) {
+          additionalParts.push({
+            inlineData: {
+              mimeType: attachmentData.mimeType,
+              data: attachmentData.base64Data,
+            },
           });
-
-          return results;
-        },
-      },
-      selectSeats: {
-        description: "Select seats for a flight",
-        parameters: z.object({
-          flightNumber: z.string().describe("Flight number"),
-        }),
-        execute: async ({ flightNumber }) => {
-          const seats = await generateSampleSeatSelection({ flightNumber });
-          return seats;
-        },
-      },
-      createReservation: {
-        description: "Display pending reservation details",
-        parameters: z.object({
-          seats: z.string().array().describe("Array of selected seat numbers"),
-          flightNumber: z.string().describe("Flight number"),
-          departure: z.object({
-            cityName: z.string().describe("Name of the departure city"),
-            airportCode: z.string().describe("Code of the departure airport"),
-            timestamp: z.string().describe("ISO 8601 date of departure"),
-            gate: z.string().describe("Departure gate"),
-            terminal: z.string().describe("Departure terminal"),
-          }),
-          arrival: z.object({
-            cityName: z.string().describe("Name of the arrival city"),
-            airportCode: z.string().describe("Code of the arrival airport"),
-            timestamp: z.string().describe("ISO 8601 date of arrival"),
-            gate: z.string().describe("Arrival gate"),
-            terminal: z.string().describe("Arrival terminal"),
-          }),
-          passengerName: z.string().describe("Name of the passenger"),
-        }),
-        execute: async (props) => {
-          const { totalPriceInUSD } = await generateReservationPrice(props);
-          const session = await auth();
-
-          const id = generateUUID();
-
-          if (session && session.user && session.user.id) {
-            await createReservation({
-              id,
-              userId: session.user.id,
-              details: { ...props, totalPriceInUSD },
-            });
-
-            return { id, ...props, totalPriceInUSD };
-          } else {
-            return {
-              error: "User is not signed in to perform this action!",
-            };
-          }
-        },
-      },
-      authorizePayment: {
-        description:
-          "User will enter credentials to authorize payment, wait for user to repond when they are done",
-        parameters: z.object({
-          reservationId: z
-            .string()
-            .describe("Unique identifier for the reservation"),
-        }),
-        execute: async ({ reservationId }) => {
-          return { reservationId };
-        },
-      },
-      verifyPayment: {
-        description: "Verify payment status",
-        parameters: z.object({
-          reservationId: z
-            .string()
-            .describe("Unique identifier for the reservation"),
-        }),
-        execute: async ({ reservationId }) => {
-          const reservation = await getReservationById({ id: reservationId });
-
-          if (reservation.hasCompletedPayment) {
-            return { hasCompletedPayment: true };
-          } else {
-            return { hasCompletedPayment: false };
-          }
-        },
-      },
-      displayBoardingPass: {
-        description: "Display a boarding pass",
-        parameters: z.object({
-          reservationId: z
-            .string()
-            .describe("Unique identifier for the reservation"),
-          passengerName: z
-            .string()
-            .describe("Name of the passenger, in title case"),
-          flightNumber: z.string().describe("Flight number"),
-          seat: z.string().describe("Seat number"),
-          departure: z.object({
-            cityName: z.string().describe("Name of the departure city"),
-            airportCode: z.string().describe("Code of the departure airport"),
-            airportName: z.string().describe("Name of the departure airport"),
-            timestamp: z.string().describe("ISO 8601 date of departure"),
-            terminal: z.string().describe("Departure terminal"),
-            gate: z.string().describe("Departure gate"),
-          }),
-          arrival: z.object({
-            cityName: z.string().describe("Name of the arrival city"),
-            airportCode: z.string().describe("Code of the arrival airport"),
-            airportName: z.string().describe("Name of the arrival airport"),
-            timestamp: z.string().describe("ISO 8601 date of arrival"),
-            terminal: z.string().describe("Arrival terminal"),
-            gate: z.string().describe("Arrival gate"),
-          }),
-        }),
-        execute: async (boardingPass) => {
-          return boardingPass;
-        },
-      },
-    },
-    onFinish: async ({ responseMessages }) => {
-      if (session.user && session.user.id) {
-        try {
-          await saveChat({
-            id,
-            messages: [...coreMessages, ...responseMessages],
-            userId: session.user.id,
-          });
-        } catch (error) {
-          console.error("Failed to save chat");
         }
       }
-    },
-    experimental_telemetry: {
-      isEnabled: true,
-      functionId: "stream-text",
-    },
-  });
+    } catch (error) {
+      console.error("Error processing attachment data:", error);
+    }
+  }
 
-  return result.toDataStreamResponse({});
+  // Make sure we have valid messages to process
+  if (!coreMessages.length) {
+    return new Response("No valid messages to process", { status: 400 });
+  }
+
+  // Extract the latest message for processing
+  const latestMessage = coreMessages[coreMessages.length - 1];
+  const userMessage = latestMessage?.content || "";
+
+  // Make sure userMessage is a string before calling toLowerCase()
+  const userMessageString =
+    typeof userMessage === "string" ? userMessage : String(userMessage);
+
+  // Detect triggers for special handling
+  const isCanvasQuery =
+    userMessageString.toLowerCase().includes("@canvas") || canvasDataUrl;
+  const isDocumentQuery = !!attachmentData;
+  const isMCQQuery =
+    userMessageString.toLowerCase().includes("@mcq") ||
+    userMessageString.toLowerCase().includes("generate mcqs");
+  const graphTriggers = [
+    "@graph",
+    "graph",
+    "plot",
+    "equation",
+    "function",
+    "sine wave",
+    "linear function",
+    "quadratic",
+    "trigonometric",
+  ];
+  const isGraphQuery = graphTriggers.some((trigger) =>
+    userMessageString.toLowerCase().includes(trigger),
+  );
+
+  try {
+    const result = await streamText({
+      model: geminiProModel,
+      system: `You are Turing, an AI Mathematics, Physics and Computer Science Tutor focused on accelerating student learning.
+
+- For general queries, provide concise, clear, and engaging responses using markdown formatting where appropriate.
+- When the user mentions '@graph' or explicitly asks for a graph, or when explaining mathematical concepts that benefit from visualization, generate Desmos-compatible graph expressions in the specified JSON format.
+- When the user mentions '@canvas', focus on analyzing the provided image (e.g., notes or drawings). Only generate graph expressions if the image contains mathematical functions or equations that would benefit from visualization.
+- If the user mentions '@mcq' or 'generate mcqs', provide multiple-choice questions in the specified JSON format.
+- When the user uploads a document (PDF, PPT, DOC), analyze its content and provide a helpful summary, explanation, or answer questions about it.
+- Keep your explanations clear and educational.
+- Today's date is ${new Date().toLocaleDateString()}.
+      `,
+      messages: coreMessages,
+      tools: {
+        generateDesmosGraph: {
+          description: "Generate Desmos-compatible graph expressions",
+          parameters: z.object({
+            expressions: z
+              .array(z.string())
+              .describe("Array of Desmos-compatible expressions"),
+            description: z
+              .string()
+              .describe("Brief educational explanation of the graph"),
+          }),
+          execute: async ({ expressions, description }) => {
+            return {
+              desmosExpressions: expressions,
+              description,
+            };
+          },
+        },
+        generateMCQs: {
+          description: "Generate multiple-choice questions on the given topic",
+          parameters: z.object({
+            mcqs: z
+              .array(
+                z.object({
+                  question: z.string().describe("The question text"),
+                  options: z.array(z.string()).describe("Array of options"),
+                  correctAnswer: z.string().describe("The correct answer"),
+                }),
+              )
+              .describe("Array of multiple-choice questions"),
+          }),
+          execute: async ({ mcqs }) => {
+            return { mcqs };
+          },
+        },
+        analyzeCanvas: {
+          description: "Analyze content from a canvas drawing or written notes",
+          parameters: z.object({
+            analysis: z.string().describe("Analysis of the canvas content"),
+            suggestions: z
+              .array(z.string())
+              .describe("Suggested next steps or improvements"),
+          }),
+          execute: async ({ analysis, suggestions }) => {
+            return { analysis, suggestions };
+          },
+        },
+        analyzeDocument: {
+          description: "Analyze content from an uploaded document",
+          parameters: z.object({
+            documentType: z
+              .string()
+              .describe("Type of document (PDF, PPT, DOC, etc.)"),
+            summary: z.string().describe("Summary of the document content"),
+            keyPoints: z
+              .array(z.string())
+              .describe("Key points from the document"),
+          }),
+          execute: async ({ documentType, summary, keyPoints }) => {
+            return { documentType, summary, keyPoints };
+          },
+        },
+      },
+      onFinish: async ({ responseMessages }) => {
+        if (session.user && session.user.id) {
+          try {
+            await saveChat({
+              id,
+              messages: [...coreMessages, ...responseMessages],
+              userId: session.user.id,
+            });
+          } catch (error) {
+            console.error("Failed to save chat");
+          }
+        }
+      },
+      experimental_telemetry: {
+        isEnabled: true,
+        functionId: "stream-text",
+      },
+    });
+
+    return result.toDataStreamResponse({});
+  } catch (error) {
+    console.error("Error in AI processing:", error);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to process request",
+        details: error.message,
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
 }
 
 export async function DELETE(request: Request) {
