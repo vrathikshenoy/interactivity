@@ -3,9 +3,9 @@ import { PenTool, LineChart, Loader2 } from "lucide-react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
-import { handleSignOut } from "@/ai/authAction";
+import { handleSignOut } from "@/ai/authActions";
 import { auth } from "@/app/(auth)/auth";
 
 // Import the server action
@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { Sheet, SheetContent } from "../ui/sheet";
+
 
 // Dynamically import CanvasPanel and GraphPanel
 const CanvasPanel = dynamic(
@@ -64,6 +65,11 @@ export const Navbar = ({ user }) => {
   const [currentDesmosExpressions, setCurrentDesmosExpressions] =
     useState(null);
   const getCanvasDataUrlFuncRef = useRef(null);
+
+  // Add debugging log to check the user object
+  useEffect(() => {
+    console.log("Current user in Navbar:", user);
+  }, [user]);
 
   // Toggle functions
   const handleToggleCanvas = useCallback(() => {
@@ -142,7 +148,7 @@ export const Navbar = ({ user }) => {
           </Button>
         </div>
 
-        {user ? (
+        {user && user.email ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
