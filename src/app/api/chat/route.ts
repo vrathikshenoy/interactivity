@@ -1,12 +1,12 @@
-// app/api/chat/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { generativeModel } from "@/lib/gemini";
 import { Content, Part } from "@google/generative-ai";
 
 export async function POST(req: NextRequest) {
   try {
-    const { history, message, canvasDataUrl } = await req.json();
+    const { history, message, canvasDataUrl, attachments } = await req.json();
 
+    // Validate input
     if (!message) {
       return NextResponse.json(
         { error: "Message is required" },
@@ -14,180 +14,120 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // System Instruction with clear rules for canvas and graph handling
-    const systemInstruction = `You are GraphMentor, an AI Mathematics Tutor focused on accelerating student learning.
-
-- For general queries, provide concise, clear, and engaging responses using markdown formatting where appropriate.
-- When the user mentions '@graph' or explicitly asks for a graph, or when explaining mathematical concepts that benefit from visualization, generate Desmos-compatible graph expressions in the specified JSON format.
-- When the user mentions '@canvas', focus on analyzing the provided image (e.g., notes or drawings). Only generate graph expressions if the image contains mathematical functions or equations that would benefit from visualization.
-- If the user mentions '@mcq' or 'generate mcqs', provide multiple-choice questions in the specified JSON format.
-
-Graph Generation Guidelines:
-- Use precise Desmos syntax for graph expressions.
-- Provide clear, educational descriptions for the graphs.
-
-Output Format for Graphs:
-\`\`\`json
-{
-  "desmos_expressions": ["expression1", "expression2"],
-  "description": "Brief educational explanation"
-}
-\`\`\`
-
-Output Format for MCQs:
-\`\`\`json
-{
-  "mcqs": [{"question": "Q1?", "options": ["A", "B", "C"], "correctAnswer": "A"}]
-}
-\`\`\``;
-
-    // Prepare History
-    const geminiHistory: Content[] = history.map(
-      (msg: { role: "user" | "model"; content: string }) => ({
-        role: msg.role,
-        parts: [{ text: msg.content }],
-      }),
-    );
-
-    // Prepare Current Message Parts
-    const currentMessageParts: Part[] = [{ text: message }];
-
-    // Handle Canvas Data
-    if (canvasDataUrl) {
-      const imageRegex = /^data:image\/(png|jpeg|jpg|webp);base64,/;
-      if (imageRegex.test(canvasDataUrl)) {
-        const mimeType = canvasDataUrl
-          .match(imageRegex)?.[0]
-          ?.replace("data:", "")
-          .replace(";base64,", "");
-        const base64Data = canvasDataUrl.split(",")[1];
-        if (mimeType && base64Data) {
-          currentMessageParts.push({
-            inlineData: {
-              mimeType: mimeType,
-              data: base64Data,
-            },
-          });
-          currentMessageParts.push({
-            text: "\n\n(Instruction: Analyze the provided image contextually.)",
-          });
+    // Validate history sequence
+    if (history.length > 0) {
+      for (let i = 0; i < history.length; i++) {
+        const expectedRole = i % 2 === 0 ? "user" : "model";
+        if (history[i].role !== expectedRole) {
+          throw new Error(
+            `Invalid message sequence at position ${i}. Expected ${expectedRole}, got ${history[i].role}`,
+          );
         }
-      } else {
-        console.warn("Invalid canvasDataUrl format");
       }
     }
 
-    // Detect triggers
-    const isCanvasQuery = message.toLowerCase().includes("@canvas");
-    const graphTriggers = [
-      "@graph",
-      "graph",
-      "plot",
-      "equation",
-      "function",
-      "sine wave",
-      "linear function",
-      "quadratic",
-      "trigonometric",
+    const systemInstruction = `You are GraphMentor, an AI tutor specializing in mathematics and science. Follow these rules:
+
+1. Always start with user message
+2. For file attachments:
+   - Summarize key points in bullet points
+   - Extract important formulas/theorems
+   - Create study guides
+3. For @mcq requests:
+   - Generate 3-5 high-quality MCQs
+   - Include detailed explanations
+   - Format as JSON
+4. For math questions:
+   - Provide step-by-step solutions
+   - Use LaTeX for equations
+5. For graphs:
+   - Generate Desmos expressions when appropriate
+   - Format as JSON`;
+
+    // Handle attachments
+    let attachmentContent = "";
+    if (attachments?.length > 0) {
+      const attachment = attachments[0];
+      if (attachment.type.startsWith("image/")) {
+        attachmentContent = `[Image attachment: ${attachment.name}]`;
+      } else {
+        try {
+          const textContent = Buffer.from(
+            attachment.content,
+            "base64",
+          ).toString("utf-8");
+          attachmentContent = `[File content]:\n${textContent.substring(0, 2000)}`;
+        } catch (e) {
+          console.error("Error decoding attachment:", e);
+          attachmentContent = `[Could not decode file: ${attachment.name}]`;
+        }
+      }
+    }
+
+    // Prepare message parts
+    const messageParts: Part[] = [
+      {
+        text: systemInstruction + "\n\n" + message + "\n\n" + attachmentContent,
+      },
     ];
-    const isGraphQuery = graphTriggers.some((trigger) =>
-      message.toLowerCase().includes(trigger),
-    );
 
-    // Modify message based on triggers
-    let processedMessage = message;
-    if (isGraphQuery) {
-      processedMessage +=
-        "\n\nProvide Desmos-compatible expressions in JSON format as specified in system instructions.";
+    // Add canvas image if provided
+    if (canvasDataUrl) {
+      const imageRegex = /^data:image\/(png|jpeg|jpg|webp);base64,/;
+      if (imageRegex.test(canvasDataUrl)) {
+        const mimeType = canvasDataUrl.match(imageRegex)?.[1];
+        const base64Data = canvasDataUrl.split(",")[1];
+        if (mimeType && base64Data) {
+          messageParts.push({
+            inlineData: {
+              mimeType: `image/${mimeType}`,
+              data: base64Data,
+            },
+          });
+        }
+      }
     }
 
-    if (isCanvasQuery && !isGraphQuery) {
-      processedMessage += `
-    **Objective:** Act as a friendly and engaging tutor to help the student understand the content in the provided image, explain it step-by-step, and encourage their learning with a supportive tone.
+    // Start new chat session if no history
+    if (history.length === 0) {
+      const chat = generativeModel.startChat({
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 2048,
+        },
+      });
 
-    **Instructions:**
+      const result = await chat.sendMessage(messageParts);
+      const response = result.response;
+      const text = response.text();
 
-    1. **Identify and Describe:**
-        - Quickly note the main elements in the image (e.g., numbers, symbols, style) to set the scene for the student.
-        - Keep it simple and relatable, like pointing out what it reminds you of (e.g., "This looks like something you'd see on a whiteboard!").
-        - Avoid mentioning the color scheme or layout (e.g., avoid saying it’s written in bright orange on a black background).
-
-    2. **Teach and Explain:**
-        - **Mathematical Expressions/Problems:** If the image shows a math problem, state it clearly, then walk through solving it step-by-step in an easy-to-follow way. Use a conversational tone (e.g., "Let’s figure this out together!").
-        - **Equations:** If the image contains an equation, solve it and explain each step.
-        - **Break It Down:** Explain the concept behind the problem (e.g., what addition or an equation means) in a brief and fun way.
-        - **Answer the Question:** If the problem is incomplete, give the answer and explain why it makes sense. Encourage the student by asking them to try it too (e.g., "What do you think the answer is?").
-
-    3. **Subject-Specific Notes:** 
-        - **Computer Science Notes:** If the image includes computer science content, explain it clearly, focusing on the core concepts in the notes. Offer examples or analogies where helpful.
-        - **Physics Notes:** If the image includes physics content, explain the key principles behind it and answer any questions posed by the notes.
-
-    4. **Engage and Encourage:**
-        - Wrap up with a positive summary of what they’ve learned from the image (e.g., "See how easy that was?").
-        - Add a fun, supportive comment or question to keep them motivated (e.g., "You’re already mastering this—want to try another one?").
-
-    **Constraint:** Keep explanations simple and avoid overcomplicating things (e.g., no graphs or advanced terms unless the image needs it). Focus on tutoring basics in a way that builds confidence.
-  `;
+      return NextResponse.json({
+        reply: text,
+        mcqData: extractMCQs(text),
+        desmosExpressions: extractDesmosExpressions(text),
+      });
     }
 
-    // Start Chat Session
+    // Continue existing chat
     const chat = generativeModel.startChat({
-      history: geminiHistory,
+      history: history.map((msg) => ({
+        role: msg.role,
+        parts: [{ text: msg.content }],
+      })),
       generationConfig: {
         temperature: 0.7,
         maxOutputTokens: 2048,
       },
     });
 
-    const effectiveMessage =
-      history.length === 0
-        ? `${systemInstruction}\n\nUser: ${processedMessage}`
-        : processedMessage;
-
-    const messagePartsToSend: Part[] = [
-      { text: effectiveMessage },
-      ...currentMessageParts.slice(1),
-    ];
-
-    // Send Message
-    const result = await chat.sendMessage(messagePartsToSend);
+    const result = await chat.sendMessage(messageParts);
     const response = result.response;
     const text = response.text();
 
-    // Extract Structured Data
-    let desmosExpressions: string[] = [];
-    let description = "";
-    let mcqData = null;
-
-    // Regex to find JSON blocks
-    const jsonRegex = /```json\s*(\{[\s\S]*?\})\s*```/g;
-    let match;
-    while ((match = jsonRegex.exec(text)) !== null) {
-      try {
-        const jsonContent = match[1];
-        const parsedJson = JSON.parse(jsonContent);
-
-        if (
-          parsedJson.desmos_expressions &&
-          Array.isArray(parsedJson.desmos_expressions)
-        ) {
-          desmosExpressions = parsedJson.desmos_expressions;
-          description = parsedJson.description || "";
-        }
-        if (parsedJson.mcqs && Array.isArray(parsedJson.mcqs)) {
-          mcqData = parsedJson.mcqs;
-        }
-      } catch (parseError) {
-        console.warn("JSON parsing error:", parseError);
-      }
-    }
-
     return NextResponse.json({
       reply: text,
-      desmosExpressions:
-        desmosExpressions.length > 0 ? desmosExpressions : null,
-      description: description || null,
-      mcqData: mcqData,
+      mcqData: extractMCQs(text),
+      desmosExpressions: extractDesmosExpressions(text),
     });
   } catch (error: any) {
     console.error("Chat processing error:", error);
@@ -196,4 +136,47 @@ Output Format for MCQs:
       { status: 500 },
     );
   }
+}
+
+// Helper function to extract MCQs from response text
+function extractMCQs(text: string) {
+  const jsonRegex = /```json\s*({[\s\S]*?})\s*```/;
+  const match = text.match(jsonRegex);
+  if (match) {
+    try {
+      const data = JSON.parse(match[1]);
+      if (data.mcqs && Array.isArray(data.mcqs)) {
+        return data.mcqs.map((mcq: any) => ({
+          question: mcq.question,
+          options: mcq.options || [],
+          correctAnswer: mcq.correctAnswer,
+          explanation:
+            mcq.explanation ||
+            `The correct answer is ${mcq.correctAnswer} because...`,
+        }));
+      }
+    } catch (e) {
+      console.warn("Failed to parse MCQs", e);
+    }
+  }
+  return null;
+}
+
+// Helper function to extract Desmos expressions from response text
+function extractDesmosExpressions(text: string) {
+  const jsonRegex = /```json\s*({[\s\S]*?})\s*```/;
+  const match = text.match(jsonRegex);
+  if (match) {
+    try {
+      const data = JSON.parse(match[1]);
+      if (data.desmos_expressions && Array.isArray(data.desmos_expressions)) {
+        return data.desmos_expressions.filter(
+          (expr: string) => expr.trim().length > 0,
+        );
+      }
+    } catch (e) {
+      console.warn("Failed to parse Desmos expressions", e);
+    }
+  }
+  return null;
 }
